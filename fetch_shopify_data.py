@@ -1,7 +1,9 @@
 import requests
 import csv
 import os
+import sys
 from datetime import datetime, timedelta, timezone
+from requests.exceptions import RequestException, Timeout
 
 # ==============================
 # Environment variables
@@ -11,7 +13,8 @@ API_TOKEN = os.getenv("SHOPIFY_API_TOKEN")
 API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2026-01")
 
 if not STORE_NAME or not API_TOKEN:
-    raise RuntimeError("Missing SHOPIFY_STORE or SHOPIFY_API_TOKEN")
+    print("❌ ERROR: Missing SHOPIFY_STORE or SHOPIFY_API_TOKEN")
+    sys.exit(1)
 
 HEADERS = {
     "X-Shopify-Access-Token": API_TOKEN
@@ -26,7 +29,26 @@ DAYS_RANGE = 30
 START_DATE = datetime.now(timezone.utc) - timedelta(days=DAYS_RANGE)
 
 # ==============================
-# Fetch orders (FAST & SAFE)
+# Error handler
+# ==============================
+def handle_shopify_error(response):
+    print("❌ Shopify API Error")
+    print(f"Status code: {response.status_code}")
+    print(f"Response preview: {response.text[:300]}")
+
+    if response.status_code == 401:
+        print("🔑 Likely cause: Invalid or expired API token")
+    elif response.status_code == 403:
+        print("🔒 Likely cause: Missing permissions (read_orders / read_all_orders)")
+    elif response.status_code == 429:
+        print("⏳ Rate limited by Shopify")
+    elif response.status_code >= 500:
+        print("💥 Shopify server error")
+
+    sys.exit(1)
+
+# ==============================
+# Fetch recent orders (SAFE)
 # ==============================
 def fetch_recent_orders():
     orders = []
@@ -38,47 +60,62 @@ def fetch_recent_orders():
     }
 
     page = 1
-    stop_pagination = False
 
-    print(f"📅 Fetching orders from last {DAYS_RANGE} days...")
-    print(f"📅 Start date (UTC): {START_DATE.isoformat()}")
+    print("========================================")
+    print(f"🛒 Fetching Shopify orders (last {DAYS_RANGE} days)")
+    print(f"📅 Cutoff date (UTC): {START_DATE.isoformat()}")
+    print("========================================")
 
     while True:
-        response = requests.get(
-            BASE_URL,
-            headers=HEADERS,
-            params=params,
-            timeout=30
-        )
+        try:
+            response = requests.get(
+                BASE_URL,
+                headers=HEADERS,
+                params=params,
+                timeout=30
+            )
+        except Timeout:
+            print("⏰ ERROR: Request timed out")
+            sys.exit(1)
+        except RequestException as e:
+            print(f"🌐 Network error: {e}")
+            sys.exit(1)
 
         if response.status_code != 200:
             handle_shopify_error(response)
 
         batch = response.json().get("orders", [])
-
         if not batch:
             break
+
+        stop_pagination = False
 
         for order in batch:
             created_at = datetime.fromisoformat(
                 order["created_at"].replace("Z", "+00:00")
             )
 
+            # Stop once we hit older orders
             if created_at < START_DATE:
                 stop_pagination = True
                 break
 
             orders.append(order)
 
-        print(f"✅ Page {page}: kept {len(orders)} orders")
+        print(f"✅ Page {page}: total kept orders = {len(orders)}")
 
         if stop_pagination:
-            print("🛑 Reached orders older than date range, stopping pagination")
+            print("🛑 Reached orders older than date range. Stopping pagination.")
             break
 
         link = response.headers.get("Link")
         if link and 'rel="next"' in link:
-            page_info = link.split("page_info=")[1].split(">")[0]
+            try:
+                page_info = link.split("page_info=")[1].split(">")[0]
+            except IndexError:
+                print("⚠️ Pagination link malformed. Stopping early.")
+                break
+
             params = {
                 "limit": 250,
                 "page_info": page_info
@@ -89,14 +126,13 @@ def fetch_recent_orders():
 
     return orders
 
-
 # ==============================
 # Generate summary CSV
 # ==============================
 def generate_daily_summary(orders):
     revenue = 0.0
     refunds = 0.0
-    ad_spend = 0.0  # Manual input for now
+    ad_spend = 0.0  # manual input for now
 
     for order in orders:
         revenue += float(order.get("total_price", 0))
@@ -123,18 +159,18 @@ def generate_daily_summary(orders):
 # Main
 # ==============================
 def main():
-    print("========================================")
-    print("Fetching Shopify orders (last 30 days)...")
-    print("========================================")
+    try:
+        orders = fetch_recent_orders()
+        generate_daily_summary(orders)
+    except Exception as e:
+        print("💥 Unexpected error occurred")
+        print(str(e))
+        sys.exit(1)
 
-    orders = fetch_recent_orders()
-    generate_daily_summary(orders)
-
     print("========================================")
-    print(f"Total orders processed: {len(orders)}")
-    print("CSV generated: daily_summary.csv")
+    print(f"✅ Sync complete. Orders processed: {len(orders)}")
+    print("📄 CSV generated: daily_summary.csv")
     print("========================================")
 
 if __name__ == "__main__":
     main()
-
