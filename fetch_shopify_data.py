@@ -34,10 +34,14 @@ def fetch_recent_orders():
     params = {
         "status": "any",
         "limit": 250,
-        "created_at_min": START_DATE.isoformat()
+        "order": "created_at desc"
     }
 
     page = 1
+    stop_pagination = False
+
+    print(f"📅 Fetching orders from last {DAYS_RANGE} days...")
+    print(f"📅 Start date (UTC): {START_DATE.isoformat()}")
 
     while True:
         response = requests.get(
@@ -47,12 +51,30 @@ def fetch_recent_orders():
             timeout=30
         )
 
-        response.raise_for_status()
+        if response.status_code != 200:
+            handle_shopify_error(response)
 
         batch = response.json().get("orders", [])
-        orders.extend(batch)
 
-        print(f"Fetched page {page}, total orders so far: {len(orders)}")
+        if not batch:
+            break
+
+        for order in batch:
+            created_at = datetime.fromisoformat(
+                order["created_at"].replace("Z", "+00:00")
+            )
+
+            if created_at < START_DATE:
+                stop_pagination = True
+                break
+
+            orders.append(order)
+
+        print(f"✅ Page {page}: kept {len(orders)} orders")
+
+        if stop_pagination:
+            print("🛑 Reached orders older than date range, stopping pagination")
+            break
 
         link = response.headers.get("Link")
         if link and 'rel="next"' in link:
@@ -66,6 +88,7 @@ def fetch_recent_orders():
             break
 
     return orders
+
 
 # ==============================
 # Generate summary CSV
@@ -114,3 +137,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
