@@ -26,15 +26,15 @@ print("========================================")
 
 orders = []
 page_info = None
+is_first_request = True
 
 while len(orders) < MAX_ORDERS:
-    params = {
-        "limit": LIMIT,
-        "status": "any",
-        "order": "created_at desc"
-    }
+    params = {"limit": LIMIT}
 
-    if page_info:
+    if is_first_request:
+        params["status"] = "any"
+        params["order"] = "created_at desc"
+    else:
         params["page_info"] = page_info
 
     resp = requests.get(
@@ -65,6 +65,7 @@ while len(orders) < MAX_ORDERS:
         break
 
     page_info = link.split("page_info=")[1].split(">")[0]
+    is_first_request = False
 
     if len(orders) >= MAX_ORDERS:
         print("🛑 Reached max order cap. Stopping fetch.")
@@ -83,10 +84,11 @@ daily = defaultdict(lambda: {
 for o in orders:
     date_key = o["created_at"][:10]
     revenue = float(o["total_price"])
+
     refunds = sum(
-        float(r["amount"])
+        float(t["amount"])
         for r in o.get("refunds", [])
-        for r in r.get("transactions", [])
+        for t in r.get("transactions", [])
     )
 
     daily[date_key]["revenue"] += revenue
