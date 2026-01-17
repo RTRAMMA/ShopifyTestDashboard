@@ -26,6 +26,7 @@ BASE_URL = f"https://{STORE_NAME}.myshopify.com/admin/api/{API_VERSION}/orders.j
 # Config
 # ==============================
 DAYS_RANGE = 30
+MAX_ORDERS = 1000
 START_DATE = datetime.now(timezone.utc) - timedelta(days=DAYS_RANGE)
 
 # ==============================
@@ -48,7 +49,7 @@ def handle_shopify_error(response):
     sys.exit(1)
 
 # ==============================
-# Fetch recent orders (SAFE)
+# Fetch latest orders (SAFE)
 # ==============================
 def fetch_recent_orders():
     orders = []
@@ -62,11 +63,16 @@ def fetch_recent_orders():
     page = 1
 
     print("========================================")
-    print(f"🛒 Fetching Shopify orders (last {DAYS_RANGE} days)")
-    print(f"📅 Cutoff date (UTC): {START_DATE.isoformat()}")
+    print("🛒 Fetching Shopify orders")
+    print(f"📅 Date filter: last {DAYS_RANGE} days")
+    print(f"🧯 Order safety cap: {MAX_ORDERS}")
     print("========================================")
 
     while True:
+        if len(orders) >= MAX_ORDERS:
+            print("🛑 Reached max order cap. Stopping fetch.")
+            break
+
         try:
             response = requests.get(
                 BASE_URL,
@@ -88,34 +94,12 @@ def fetch_recent_orders():
         if not batch:
             break
 
-        stop_pagination = False
-
-        for order in batch:
-            created_at = datetime.fromisoformat(
-                order["created_at"].replace("Z", "+00:00")
-            )
-
-            # Stop once we hit older orders
-            if created_at < START_DATE:
-                stop_pagination = True
-                break
-
-            orders.append(order)
-
-        print(f"✅ Page {page}: total kept orders = {len(orders)}")
-
-        if stop_pagination:
-            print("🛑 Reached orders older than date range. Stopping pagination.")
-            break
+        orders.extend(batch)
+        print(f"✅ Page {page}: fetched {len(orders)} orders so far")
 
         link = response.headers.get("Link")
         if link and 'rel="next"' in link:
-            try:
-                page_info = link.split("page_info=")[1].split(">")[0]
-            except IndexError:
-                print("⚠️ Pagination link malformed. Stopping early.")
-                break
-
+            page_info = link.split("page_info=")[1].split(">")[0]
             params = {
                 "limit": 250,
                 "page_info": page_info
@@ -124,17 +108,22 @@ def fetch_recent_orders():
         else:
             break
 
-    return orders
+    return orders[:MAX_ORDERS]
 
 # ==============================
-# Generate summary CSV
+# Filter + Generate CSV
 # ==============================
 def generate_daily_summary(orders):
+    filtered_orders = [
+        o for o in orders
+        if datetime.fromisoformat(o["created_at"].replace("Z", "+00:00")) >= START_DATE
+    ]
+
     revenue = 0.0
     refunds = 0.0
-    ad_spend = 0.0  # manual input for now
+    ad_spend = 0.0  # manual for now
 
-    for order in orders:
+    for order in filtered_orders:
         revenue += float(order.get("total_price", 0))
 
         for refund in order.get("refunds", []):
@@ -152,23 +141,21 @@ def generate_daily_summary(orders):
         writer.writerow(["ad_spend", round(ad_spend, 2)])
         writer.writerow(["net_profit", round(net_profit, 2)])
         writer.writerow(["roas", round(roas, 2)])
-        writer.writerow(["last_updated", datetime.now(timezone.utc).strftime("%Y-%m-%d")])
+        writer.writerow(["orders_used", len(filtered_orders)])
+        writer.writerow(["orders_scanned", len(orders)])
         writer.writerow(["data_range", f"Last {DAYS_RANGE} days"])
+        writer.writerow(["last_updated", datetime.now(timezone.utc).strftime("%Y-%m-%d")])
 
 # ==============================
 # Main
 # ==============================
 def main():
-    try:
-        orders = fetch_recent_orders()
-        generate_daily_summary(orders)
-    except Exception as e:
-        print("💥 Unexpected error occurred")
-        print(str(e))
-        sys.exit(1)
+    orders = fetch_recent_orders()
+    generate_daily_summary(orders)
 
     print("========================================")
-    print(f"✅ Sync complete. Orders processed: {len(orders)}")
+    print("✅ Sync complete")
+    print(f"📦 Orders scanned: {len(orders)}")
     print("📄 CSV generated: daily_summary.csv")
     print("========================================")
 
