@@ -6,152 +6,154 @@ import os
 import sys
 
 # ================================
-# CONFIG (ENV VARS)
+# CONFIGURATION (ENV VARS)
 # ================================
-STORE = os.getenv("SHOPIFY_STORE")
-TOKEN = os.getenv("SHOPIFY_API_TOKEN")
-VERSION = os.getenv("SHOPIFY_API_VERSION", "2026-01")
+STORE_NAME = os.getenv("SHOPIFY_STORE")
+API_TOKEN = os.getenv("SHOPIFY_API_TOKEN")
+API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2026-01")
 
-if not STORE or not TOKEN:
+if not STORE_NAME or not API_TOKEN:
     print("❌ Missing SHOPIFY_STORE or SHOPIFY_API_TOKEN")
     sys.exit(1)
 
-ORDERS_URL = f"https://{STORE}.myshopify.com/admin/api/{VERSION}/orders.json"
+BASE_URL = f"https://{STORE_NAME}.myshopify.com/admin/api/{API_VERSION}"
+ORDERS_ENDPOINT = f"{BASE_URL}/orders.json"
 
 HEADERS = {
-    "X-Shopify-Access-Token": TOKEN,
+    "X-Shopify-Access-Token": API_TOKEN,
     "Content-Type": "application/json"
 }
 
-# ================================
-# LIMITS
-# ================================
-MAX_ORDERS = 10000
-LIMIT = 250
-DAYS_RANGE = 30
 OUTPUT_FILE = "daily_summary.csv"
 
-cutoff_date = datetime.now(timezone.utc) - timedelta(days=DAYS_RANGE)
+# Last 30 days cutoff (UTC)
+cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
 
 # ================================
-# FETCH ORDERS (NO DATE STOP!)
+# FETCH ALL ORDERS (PAGINATED)
 # ================================
-def fetch_orders():
+def fetch_all_orders():
     orders = []
-    page_info = None
+    url = ORDERS_ENDPOINT
+    params = {
+        "status": "any",
+        "limit": 250,
+        "order": "created_at desc"
+    }
+
     page = 1
-    first = True
 
     print("=" * 40)
     print("🛒 Fetching Shopify orders")
-    print(f"🧯 Max orders: {MAX_ORDERS}")
+    print("📅 Filtering to last 30 days (post-fetch)")
     print("=" * 40)
 
-    while len(orders) < MAX_ORDERS:
-        params = {"limit": LIMIT}
-
-        if first:
-            params["status"] = "any"
-            params["order"] = "created_at desc"
-        else:
-            params = {"limit": LIMIT, "page_info": page_info}
-
-        resp = requests.get(
-            ORDERS_URL,
-            headers=HEADERS,
-            params=params,
-            timeout=30
-        )
-
-        if resp.status_code != 200:
-            print(f"❌ Shopify API error {resp.status_code}")
-            print(resp.text)
+    while url:
+        try:
+            response = requests.get(url, headers=HEADERS, params=params, timeout=30)
+            response.raise_for_status()
+        except Exception as e:
+            print(f"❌ API request failed on page {page}")
+            print(e)
             sys.exit(1)
 
-        batch = resp.json().get("orders", [])
-        if not batch:
-            break
-
+        data = response.json()
+        batch = data.get("orders", [])
         orders.extend(batch)
-        print(f"✅ Page {page}: fetched {len(orders)} orders so far")
 
-        link = resp.headers.get("Link")
-        if not link or 'rel="next"' not in link:
-            break
+        print(f"✅ Page {page}: fetched {len(batch)} orders (total: {len(orders)})")
 
-        page_info = link.split("page_info=")[1].split(">")[0]
-        first = False
+        # After first request, params MUST be None
+        params = None
+
+        # Parse pagination
+        link_header = response.headers.get("Link")
+        next_url = None
+
+        if link_header:
+            for link in link_header.split(","):
+                if 'rel="next"' in link:
+                    next_url = link.split(";")[0].strip("<> ")
+
+        url = next_url
         page += 1
 
-    return orders[:MAX_ORDERS]
+    return orders
 
 # ================================
-# FILTER + AGGREGATE
+# PROCESS ORDERS INTO DAILY TOTALS
 # ================================
 def process_orders(orders):
-    daily = defaultdict(lambda: {
+    daily_data = defaultdict(lambda: {
         "revenue": 0.0,
         "refunds": 0.0,
-        "order_count": 0
+        "orders": 0
     })
 
     kept = 0
 
-    for o in orders:
-        created = datetime.fromisoformat(o["created_at"].replace("Z", "+00:00"))
+    for order in orders:
+        created = datetime.fromisoformat(order["created_at"].replace("Z", "+00:00"))
         if created < cutoff_date:
             continue
 
-        date_key = created.astimezone(timezone.utc).strftime("%Y-%m-%d")
-        revenue = float(o["total_price"])
+        date_key = created.strftime("%Y-%m-%d")
+        revenue = float(order["total_price"])
 
-        refunds = sum(
-            float(t["amount"])
-            for r in o.get("refunds", [])
-            for t in r.get("transactions", [])
-            if t.get("kind") == "refund"
-        )
+        daily_data[date_key]["revenue"] += revenue
+        daily_data[date_key]["orders"] += 1
 
-        daily[date_key]["revenue"] += revenue
-        daily[date_key]["refunds"] += refunds
-        daily[date_key]["order_count"] += 1
+        for refund in order.get("refunds", []):
+            for tx in refund.get("transactions", []):
+                if tx.get("kind") == "refund":
+                    daily_data[date_key]["refunds"] += float(tx["amount"])
+
         kept += 1
 
     print(f"📦 Orders within last 30 days: {kept}")
-    return daily
+    return daily_data
 
 # ================================
 # WRITE CSV
 # ================================
-def write_csv(daily):
-    with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["date", "revenue", "refunds", "net_revenue", "order_count"])
+def write_csv(daily_data):
+    with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow([
+            "date",
+            "revenue",
+            "refunds",
+            "net_revenue",
+            "order_count"
+        ])
 
-        for d in sorted(daily.keys()):
-            r = daily[d]
+        for date in sorted(daily_data.keys()):
+            revenue = daily_data[date]["revenue"]
+            refunds = daily_data[date]["refunds"]
+            net_revenue = revenue - refunds
+            orders = daily_data[date]["orders"]
+
             writer.writerow([
-                d,
-                round(r["revenue"], 2),
-                round(r["refunds"], 2),
-                round(r["revenue"] - r["refunds"], 2),
-                r["order_count"]
+                date,
+                round(revenue, 2),
+                round(refunds, 2),
+                round(net_revenue, 2),
+                orders
             ])
 
 # ================================
 # MAIN
 # ================================
 def main():
-    orders = fetch_orders()
-    print(f"📦 Total orders fetched: {len(orders)}")
+    orders = fetch_all_orders()
+    print(f"📦 Total orders fetched (all time): {len(orders)}")
 
-    daily = process_orders(orders)
-    write_csv(daily)
+    daily_data = process_orders(orders)
+    write_csv(daily_data)
 
-    print("========================================")
-    print("✅ CSV generated: daily_summary.csv")
-    print("========================================")
+    print("=" * 40)
+    print(f"✅ CSV generated: {OUTPUT_FILE}")
+    print("=" * 40)
 
 if __name__ == "__main__":
     main()
-
