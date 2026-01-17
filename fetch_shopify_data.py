@@ -26,7 +26,7 @@ HEADERS = {
 # ================================
 # LIMITS
 # ================================
-MAX_ORDERS = 3000
+MAX_ORDERS = 10000
 LIMIT = 250
 DAYS_RANGE = 30
 OUTPUT_FILE = "daily_summary.csv"
@@ -154,3 +154,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
