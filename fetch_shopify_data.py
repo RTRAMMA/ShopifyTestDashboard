@@ -1,20 +1,16 @@
 import requests
 import csv
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 import os
 import sys
-from zoneinfo import ZoneInfo  # Python 3.9+
 
 # ================================
-# CONFIGURATION
+# CONFIGURATION (ENV VARS)
 # ================================
 STORE_NAME = os.getenv("SHOPIFY_STORE")
 API_TOKEN = os.getenv("SHOPIFY_API_TOKEN")
 API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2026-01")
-
-STORE_TZ = ZoneInfo("Europe/Berlin")
-OUTPUT_FILE = "daily_summary.csv"
 
 if not STORE_NAME or not API_TOKEN:
     print("❌ Missing SHOPIFY_STORE or SHOPIFY_API_TOKEN")
@@ -28,11 +24,10 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# ================================
-# DATE RANGE (LAST 30 CALENDAR DAYS – BERLIN TIME)
-# ================================
-today_berlin = datetime.now(STORE_TZ).date()
-start_date = today_berlin - timedelta(days=30)
+OUTPUT_FILE = "daily_summary.csv"
+
+# Last 30 days cutoff (UTC)
+cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
 
 # ================================
 # FETCH ALL ORDERS (PAGINATED)
@@ -43,18 +38,24 @@ def fetch_all_orders():
     params = {
         "status": "any",
         "limit": 250,
-        "order": "processed_at desc"
+        "order": "created_at desc"
     }
 
     page = 1
+
     print("=" * 40)
     print("🛒 Fetching Shopify orders")
-    print("🕒 Store timezone: Europe/Berlin")
+    print("📅 Filtering to last 30 days (post-fetch)")
     print("=" * 40)
 
     while url:
-        response = requests.get(url, headers=HEADERS, params=params, timeout=30)
-        response.raise_for_status()
+        try:
+            response = requests.get(url, headers=HEADERS, params=params, timeout=30)
+            response.raise_for_status()
+        except Exception as e:
+            print(f"❌ API request failed on page {page}")
+            print(e)
+            sys.exit(1)
 
         data = response.json()
         batch = data.get("orders", [])
@@ -62,10 +63,13 @@ def fetch_all_orders():
 
         print(f"✅ Page {page}: fetched {len(batch)} orders (total: {len(orders)})")
 
-        params = None  # required by Shopify pagination
+        # After first request, params MUST be None
+        params = None
 
+        # Parse pagination
         link_header = response.headers.get("Link")
         next_url = None
+
         if link_header:
             for link in link_header.split(","):
                 if 'rel="next"' in link:
@@ -77,7 +81,7 @@ def fetch_all_orders():
     return orders
 
 # ================================
-# PROCESS ORDERS (SHOPIFY ANALYTICS PARITY)
+# PROCESS ORDERS INTO DAILY TOTALS
 # ================================
 def process_orders(orders):
     daily_data = defaultdict(lambda: {
@@ -89,46 +93,16 @@ def process_orders(orders):
     kept = 0
 
     for order in orders:
-        # ----------------------------
-        # Shopify Analytics filters
-        # ----------------------------
-        if order.get("test") is True:
+        created = datetime.fromisoformat(order["created_at"].replace("Z", "+00:00"))
+        if created < cutoff_date:
             continue
 
-        if order.get("cancelled_at"):
-            continue
+        date_key = created.strftime("%Y-%m-%d")
+        revenue = float(order["total_price"])
 
-        if order.get("financial_status") not in ("paid", "partially_paid"):
-            continue
-
-        processed_at = order.get("processed_at")
-        if not processed_at:
-            continue  # Shopify Analytics ignores unprocessed orders
-
-        # ----------------------------
-        # Timezone conversion (processed_at)
-        # ----------------------------
-        processed_utc = datetime.fromisoformat(
-            processed_at.replace("Z", "+00:00")
-        )
-
-        processed_berlin = processed_utc.astimezone(STORE_TZ)
-        order_date = processed_berlin.date()
-
-        if not (start_date <= order_date <= today_berlin):
-            continue
-
-        date_key = order_date.isoformat()
-
-        # ----------------------------
-        # Revenue & orders
-        # ----------------------------
+        daily_data[date_key]["revenue"] += revenue
         daily_data[date_key]["orders"] += 1
-        daily_data[date_key]["revenue"] += float(order["total_price"])
 
-        # ----------------------------
-        # Refunds (same processed day as Shopify)
-        # ----------------------------
         for refund in order.get("refunds", []):
             for tx in refund.get("transactions", []):
                 if tx.get("kind") == "refund":
@@ -136,7 +110,7 @@ def process_orders(orders):
 
         kept += 1
 
-    print(f"📦 Orders counted (Analytics parity): {kept}")
+    print(f"📦 Orders within last 30 days: {kept}")
     return daily_data
 
 # ================================
@@ -150,7 +124,7 @@ def write_csv(daily_data):
             "revenue",
             "refunds",
             "net_revenue",
-            "orders"
+            "order_count"
         ])
 
         for date in sorted(daily_data.keys()):
@@ -172,14 +146,13 @@ def write_csv(daily_data):
 # ================================
 def main():
     orders = fetch_all_orders()
-    print(f"📦 Total orders fetched (API): {len(orders)}")
+    print(f"📦 Total orders fetched (all time): {len(orders)}")
 
     daily_data = process_orders(orders)
     write_csv(daily_data)
 
     print("=" * 40)
     print(f"✅ CSV generated: {OUTPUT_FILE}")
-    print("📊 Daily order counts MATCH Shopify Analytics")
     print("=" * 40)
 
 if __name__ == "__main__":
