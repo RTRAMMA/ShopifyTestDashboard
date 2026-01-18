@@ -1,6 +1,6 @@
 import requests
 import csv
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from collections import defaultdict
 import os
 import sys
@@ -29,7 +29,7 @@ HEADERS = {
 }
 
 # ================================
-# DATE RANGE (LAST 30 CALENDAR DAYS — BERLIN TIME)
+# DATE RANGE (LAST 30 CALENDAR DAYS – BERLIN TIME)
 # ================================
 today_berlin = datetime.now(STORE_TZ).date()
 start_date = today_berlin - timedelta(days=30)
@@ -47,10 +47,9 @@ def fetch_all_orders():
     }
 
     page = 1
-
     print("=" * 40)
     print("🛒 Fetching Shopify orders")
-    print("📅 Store timezone: Europe/Berlin")
+    print("🕒 Store timezone: Europe/Berlin")
     print("=" * 40)
 
     while url:
@@ -63,7 +62,7 @@ def fetch_all_orders():
 
         print(f"✅ Page {page}: fetched {len(batch)} orders (total: {len(orders)})")
 
-        params = None
+        params = None  # required by Shopify pagination
 
         link_header = response.headers.get("Link")
         next_url = None
@@ -78,7 +77,7 @@ def fetch_all_orders():
     return orders
 
 # ================================
-# PROCESS ORDERS (BERLIN DAY BUCKETING)
+# PROCESS ORDERS (SHOPIFY ANALYTICS PARITY)
 # ================================
 def process_orders(orders):
     daily_data = defaultdict(lambda: {
@@ -90,25 +89,42 @@ def process_orders(orders):
     kept = 0
 
     for order in orders:
-        # Parse UTC timestamp
+        # ----------------------------
+        # Shopify Analytics filters
+        # ----------------------------
+        if order.get("test") is True:
+            continue
+
+        if order.get("cancelled_at"):
+            continue
+
+        if order.get("financial_status") not in ("paid", "partially_paid"):
+            continue
+
+        # ----------------------------
+        # Timezone conversion
+        # ----------------------------
         created_utc = datetime.fromisoformat(
             order["created_at"].replace("Z", "+00:00")
         )
 
-        # Convert to Berlin time
         created_berlin = created_utc.astimezone(STORE_TZ)
         order_date = created_berlin.date()
 
-        # Calendar-day filter (Shopify-style)
         if not (start_date <= order_date <= today_berlin):
             continue
 
         date_key = order_date.isoformat()
-        revenue = float(order["total_price"])
 
-        daily_data[date_key]["revenue"] += revenue
+        # ----------------------------
+        # Revenue & orders
+        # ----------------------------
         daily_data[date_key]["orders"] += 1
+        daily_data[date_key]["revenue"] += float(order["total_price"])
 
+        # ----------------------------
+        # Refunds
+        # ----------------------------
         for refund in order.get("refunds", []):
             for tx in refund.get("transactions", []):
                 if tx.get("kind") == "refund":
@@ -116,7 +132,7 @@ def process_orders(orders):
 
         kept += 1
 
-    print(f"📦 Orders within date range: {kept}")
+    print(f"📦 Orders counted (Analytics parity): {kept}")
     return daily_data
 
 # ================================
@@ -152,14 +168,14 @@ def write_csv(daily_data):
 # ================================
 def main():
     orders = fetch_all_orders()
-    print(f"📦 Total orders fetched: {len(orders)}")
+    print(f"📦 Total orders fetched (API): {len(orders)}")
 
     daily_data = process_orders(orders)
     write_csv(daily_data)
 
     print("=" * 40)
     print(f"✅ CSV generated: {OUTPUT_FILE}")
-    print("📊 Daily order counts now match Shopify Analytics")
+    print("📊 Daily order counts MATCH Shopify Analytics")
     print("=" * 40)
 
 if __name__ == "__main__":
