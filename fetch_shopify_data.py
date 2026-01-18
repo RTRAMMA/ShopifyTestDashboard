@@ -39,10 +39,10 @@ def fetch_all_orders():
     }
     page = 1
 
-    print("=" * 50)
-    print("🛒 Fetching Shopify orders (API)")
-    print("📅 Applying 30-day filter AFTER fetch")
-    print("=" * 50)
+    print("=" * 40)
+    print("🛒 Fetching Shopify orders (all-time, paginated)")
+    print("📅 Filtering to last 30 days AFTER fetch")
+    print("=" * 40)
 
     while url:
         try:
@@ -53,13 +53,16 @@ def fetch_all_orders():
             print(e)
             sys.exit(1)
 
-        batch = resp.json().get("orders", [])
+        data = resp.json()
+        batch = data.get("orders", [])
         orders.extend(batch)
 
         print(f"✅ Page {page}: fetched {len(batch)} orders (total: {len(orders)})")
 
-        params = None  # REQUIRED by Shopify pagination rules
+        # After first request, params MUST be None
+        params = None
 
+        # Parse pagination
         next_url = None
         link_header = resp.headers.get("Link")
         if link_header:
@@ -73,7 +76,7 @@ def fetch_all_orders():
     return orders
 
 # ================================
-# FILTER + AGGREGATE (SHOPIFYQL-ALIGNED)
+# FILTER + AGGREGATE (BUSINESS-ALIGNED)
 # ================================
 def process_orders(orders):
     daily = defaultdict(lambda: {
@@ -85,7 +88,7 @@ def process_orders(orders):
     kept = 0
 
     for order in orders:
-        # ✔ Match FROM sales
+        # ✔ Only PAID orders (matches Admin)
         if order.get("financial_status") != "paid":
             continue
 
@@ -93,7 +96,7 @@ def process_orders(orders):
         if order.get("test"):
             continue
 
-        # ✔ Use business date
+        # ✔ Use processed_at (matches Admin day grouping)
         processed_at = order.get("processed_at")
         if not processed_at:
             continue
@@ -102,24 +105,21 @@ def process_orders(orders):
         if dt < CUTOFF_DATE:
             continue
 
-        # ✔ Exclude fully refunded / zero-value orders (ShopifyQL behavior)
-        net_value = float(order.get("current_total_price", order.get("total_price", 0)))
-        if net_value <= 0:
-            continue
-
         date_key = dt.strftime("%Y-%m-%d")
 
-        daily[date_key]["revenue"] += float(order.get("total_price", 0))
+        revenue = float(order.get("total_price", 0.0))
+        daily[date_key]["revenue"] += revenue
         daily[date_key]["order_count"] += 1
 
+        # Refunds (keep as-is)
         for refund in order.get("refunds", []):
             for tx in refund.get("transactions", []):
                 if tx.get("kind") == "refund":
-                    daily[date_key]["refunds"] += float(tx.get("amount", 0))
+                    daily[date_key]["refunds"] += float(tx.get("amount", 0.0))
 
         kept += 1
 
-    print(f"📦 Orders kept (sales-eligible, last 30 days): {kept}")
+    print(f"📦 Orders kept (paid, non-test, last 30 days): {kept}")
     return daily
 
 # ================================
@@ -145,15 +145,14 @@ def write_csv(daily):
 # ================================
 def main():
     orders = fetch_all_orders()
-    print(f"📦 Total orders fetched (API): {len(orders)}")
+    print(f"📦 Total orders fetched (all-time): {len(orders)}")
 
     daily = process_orders(orders)
     write_csv(daily)
 
-    print("=" * 50)
+    print("=" * 40)
     print("✅ CSV generated: daily_summary.csv")
-    print("🎯 Logic aligned with ShopifyQL: FROM sales SHOW orders")
-    print("=" * 50)
+    print("=" * 40)
 
 if __name__ == "__main__":
     main()
