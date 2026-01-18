@@ -1,14 +1,7 @@
-let revenueChart;
-let ordersChart;
-
 fetch("./daily_summary.csv")
   .then(r => r.text())
-  .then(csv => {
-    const data = parseCSV(csv);
-    setupDashboard(data);
-  });
+  .then(csv => setupDashboard(parseCSV(csv)));
 
-// ---------- CSV ----------
 function parseCSV(csv) {
   const rows = csv.trim().split("\n");
   rows.shift();
@@ -24,10 +17,11 @@ function parseCSV(csv) {
   });
 }
 
-// ---------- DASHBOARD ----------
 function setupDashboard(data) {
-  const adInput = document.getElementById("adSpendInput");
+  drawCharts(data);
+  updateLastUpdatedStatus(data);
 
+  const adInput = document.getElementById("adSpendInput");
   function recalc() {
     updateSummary(
       sum(data, "revenue"),
@@ -35,95 +29,85 @@ function setupDashboard(data) {
       parseFloat(adInput.value) || 0
     );
   }
-
-  drawCharts(data);
   recalc();
   adInput.addEventListener("input", recalc);
 }
 
-// ---------- SUMMARY ----------
 function updateSummary(revenue, refunds, adSpend) {
   const net = revenue - refunds - adSpend;
   const roas = adSpend > 0 ? revenue / adSpend : null;
 
   document.getElementById("totalRevenue").innerText = money(revenue);
   document.getElementById("totalRefunds").innerText = money(refunds);
-  document.getElementById("adSpend").innerText = money(adSpend);
   document.getElementById("netProfit").innerText = money(net);
 
   const roasEl = document.getElementById("roas");
   const statusEl = document.getElementById("status");
+
+  if (!roas) {
+    roasEl.innerText = "—";
+    statusEl.innerText = "";
+    return;
+  }
+
+  roasEl.innerText = roas.toFixed(2);
   statusEl.className = "";
 
-  if (adSpend === 0) {
-    roasEl.innerText = "—";
-    statusEl.innerText = "N/A";
-    statusEl.classList.add("status-na");
+  if (roas < 1) {
+    statusEl.innerText = "RED";
+    statusEl.classList.add("status-red");
+  } else if (roas < 3) {
+    statusEl.innerText = "YELLOW";
+    statusEl.classList.add("status-yellow");
   } else {
-    roasEl.innerText = roas.toFixed(2);
-
-    if (roas < 1) {
-      statusEl.innerText = "RED";
-      statusEl.classList.add("status-red");
-    } else if (roas < 3) {
-      statusEl.innerText = "YELLOW";
-      statusEl.classList.add("status-yellow");
-    } else {
-      statusEl.innerText = "GREEN";
-      statusEl.classList.add("status-green");
-    }
+    statusEl.innerText = "GREEN";
+    statusEl.classList.add("status-green");
   }
 }
 
-// ---------- CHARTS ----------
-function drawCharts(data) {
-  const labels = data.map(d => d.date);
+function updateLastUpdatedStatus(data) {
+  const badge = document.getElementById("updateBadge");
+  const lastDate = new Date(data[data.length - 1].date);
+  const today = new Date();
 
-  revenueChart = new Chart(document.getElementById("revenueChart"), {
+  lastDate.setHours(0,0,0,0);
+  today.setHours(0,0,0,0);
+
+  const diff = Math.round((today - lastDate) / 86400000);
+
+  if (diff === 0) {
+    badge.textContent = `✅ Up to date (last date: ${data[data.length - 1].date})`;
+    badge.className = "badge bg-success";
+  } else if (diff === 1) {
+    badge.textContent = `🟡 Data from yesterday (${data[data.length - 1].date})`;
+    badge.className = "badge bg-warning text-dark";
+  } else {
+    badge.textContent = `🔴 Data stale (last date: ${data[data.length - 1].date})`;
+    badge.className = "badge bg-danger";
+  }
+}
+
+function drawCharts(data) {
+  new Chart(document.getElementById("revenueChart"), {
     type: "line",
     data: {
-      labels,
+      labels: data.map(d => d.date),
       datasets: [
-        { label: "Revenue (€)", data: data.map(d => d.revenue), tension: 0.3 },
-        { label: "Net Revenue (€)", data: data.map(d => d.net), tension: 0.3 }
+        { label: "Revenue", data: data.map(d => d.revenue) },
+        { label: "Net Revenue", data: data.map(d => d.net) }
       ]
     }
   });
 
-  ordersChart = new Chart(document.getElementById("ordersChart"), {
+  new Chart(document.getElementById("ordersChart"), {
     type: "bar",
     data: {
-      labels,
+      labels: data.map(d => d.date),
       datasets: [{ label: "Orders", data: data.map(d => d.orders) }]
     }
   });
 }
 
-// ---------- SYNC STATUS ----------
-function updateSyncStatus() {
-  fetch("./sync_status.json")
-    .then(r => r.json())
-    .then(d => {
-      const badge = document.getElementById("syncBadge");
-      const ts = document.getElementById("lastUpdated");
-
-      if (d.status === "syncing") {
-        badge.innerText = "🔄 Data syncing…";
-        badge.className = "badge bg-warning text-dark";
-        ts.innerText = "";
-      } else {
-        badge.innerText = "✅ Data up to date";
-        badge.className = "badge bg-success";
-        ts.innerText = "Last updated: " + d.last_updated;
-      }
-    })
-    .catch(() => {});
-}
-
-updateSyncStatus();
-setInterval(updateSyncStatus, 5000);
-
-// ---------- HELPERS ----------
 function sum(data, key) {
   return data.reduce((a, b) => a + b[key], 0);
 }
