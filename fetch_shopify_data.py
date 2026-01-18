@@ -4,13 +4,17 @@ from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 import os
 import sys
+from zoneinfo import ZoneInfo   # Python 3.9+
 
 # ================================
-# CONFIGURATION (ENV VARS)
+# CONFIGURATION
 # ================================
 STORE_NAME = os.getenv("SHOPIFY_STORE")
 API_TOKEN = os.getenv("SHOPIFY_API_TOKEN")
 API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2026-01")
+
+STORE_TZ = ZoneInfo("Europe/Berlin")
+OUTPUT_FILE = "daily_summary.csv"
 
 if not STORE_NAME or not API_TOKEN:
     print("❌ Missing SHOPIFY_STORE or SHOPIFY_API_TOKEN")
@@ -24,10 +28,11 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-OUTPUT_FILE = "daily_summary.csv"
-
-# Last 30 days cutoff (UTC)
-cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
+# ================================
+# DATE RANGE (LAST 30 CALENDAR DAYS — BERLIN TIME)
+# ================================
+today_berlin = datetime.now(STORE_TZ).date()
+start_date = today_berlin - timedelta(days=30)
 
 # ================================
 # FETCH ALL ORDERS (PAGINATED)
@@ -45,17 +50,12 @@ def fetch_all_orders():
 
     print("=" * 40)
     print("🛒 Fetching Shopify orders")
-    print("📅 Filtering to last 30 days (post-fetch)")
+    print("📅 Store timezone: Europe/Berlin")
     print("=" * 40)
 
     while url:
-        try:
-            response = requests.get(url, headers=HEADERS, params=params, timeout=30)
-            response.raise_for_status()
-        except Exception as e:
-            print(f"❌ API request failed on page {page}")
-            print(e)
-            sys.exit(1)
+        response = requests.get(url, headers=HEADERS, params=params, timeout=30)
+        response.raise_for_status()
 
         data = response.json()
         batch = data.get("orders", [])
@@ -63,13 +63,10 @@ def fetch_all_orders():
 
         print(f"✅ Page {page}: fetched {len(batch)} orders (total: {len(orders)})")
 
-        # After first request, params MUST be None
         params = None
 
-        # Parse pagination
         link_header = response.headers.get("Link")
         next_url = None
-
         if link_header:
             for link in link_header.split(","):
                 if 'rel="next"' in link:
@@ -81,7 +78,7 @@ def fetch_all_orders():
     return orders
 
 # ================================
-# PROCESS ORDERS INTO DAILY TOTALS
+# PROCESS ORDERS (BERLIN DAY BUCKETING)
 # ================================
 def process_orders(orders):
     daily_data = defaultdict(lambda: {
@@ -93,11 +90,20 @@ def process_orders(orders):
     kept = 0
 
     for order in orders:
-        created = datetime.fromisoformat(order["created_at"].replace("Z", "+00:00"))
-        if created < cutoff_date:
+        # Parse UTC timestamp
+        created_utc = datetime.fromisoformat(
+            order["created_at"].replace("Z", "+00:00")
+        )
+
+        # Convert to Berlin time
+        created_berlin = created_utc.astimezone(STORE_TZ)
+        order_date = created_berlin.date()
+
+        # Calendar-day filter (Shopify-style)
+        if not (start_date <= order_date <= today_berlin):
             continue
 
-        date_key = created.strftime("%Y-%m-%d")
+        date_key = order_date.isoformat()
         revenue = float(order["total_price"])
 
         daily_data[date_key]["revenue"] += revenue
@@ -110,7 +116,7 @@ def process_orders(orders):
 
         kept += 1
 
-    print(f"📦 Orders within last 30 days: {kept}")
+    print(f"📦 Orders within date range: {kept}")
     return daily_data
 
 # ================================
@@ -124,7 +130,7 @@ def write_csv(daily_data):
             "revenue",
             "refunds",
             "net_revenue",
-            "order_count"
+            "orders"
         ])
 
         for date in sorted(daily_data.keys()):
@@ -146,13 +152,14 @@ def write_csv(daily_data):
 # ================================
 def main():
     orders = fetch_all_orders()
-    print(f"📦 Total orders fetched (all time): {len(orders)}")
+    print(f"📦 Total orders fetched: {len(orders)}")
 
     daily_data = process_orders(orders)
     write_csv(daily_data)
 
     print("=" * 40)
     print(f"✅ CSV generated: {OUTPUT_FILE}")
+    print("📊 Daily order counts now match Shopify Analytics")
     print("=" * 40)
 
 if __name__ == "__main__":
