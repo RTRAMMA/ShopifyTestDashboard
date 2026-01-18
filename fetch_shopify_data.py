@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import os
 import sys
-from zoneinfo import ZoneInfo   # Python 3.9+
+from zoneinfo import ZoneInfo  # Python 3.9+
 
 # ================================
 # CONFIGURATION
@@ -43,7 +43,7 @@ def fetch_all_orders():
     params = {
         "status": "any",
         "limit": 250,
-        "order": "created_at desc"
+        "order": "processed_at desc"
     }
 
     page = 1
@@ -101,15 +101,19 @@ def process_orders(orders):
         if order.get("financial_status") not in ("paid", "partially_paid"):
             continue
 
+        processed_at = order.get("processed_at")
+        if not processed_at:
+            continue  # Shopify Analytics ignores unprocessed orders
+
         # ----------------------------
-        # Timezone conversion
+        # Timezone conversion (processed_at)
         # ----------------------------
-        created_utc = datetime.fromisoformat(
-            order["created_at"].replace("Z", "+00:00")
+        processed_utc = datetime.fromisoformat(
+            processed_at.replace("Z", "+00:00")
         )
 
-        created_berlin = created_utc.astimezone(STORE_TZ)
-        order_date = created_berlin.date()
+        processed_berlin = processed_utc.astimezone(STORE_TZ)
+        order_date = processed_berlin.date()
 
         if not (start_date <= order_date <= today_berlin):
             continue
@@ -123,7 +127,7 @@ def process_orders(orders):
         daily_data[date_key]["revenue"] += float(order["total_price"])
 
         # ----------------------------
-        # Refunds
+        # Refunds (same processed day as Shopify)
         # ----------------------------
         for refund in order.get("refunds", []):
             for tx in refund.get("transactions", []):
