@@ -27,7 +27,7 @@ HEADERS = {
 OUTPUT_FILE = "daily_summary.csv"
 
 # Last 30 days cutoff (UTC)
-cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
+cutoff_date = datetime.now(timezone.utc) - timedelta(days=31)
 
 # ================================
 # FETCH ALL ORDERS (PAGINATED)
@@ -157,3 +157,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
