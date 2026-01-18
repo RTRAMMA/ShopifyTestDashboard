@@ -5,11 +5,15 @@ from collections import defaultdict
 import os
 from zoneinfo import ZoneInfo
 
+# ================================
+# CONFIG
+# ================================
 STORE_NAME = os.getenv("SHOPIFY_STORE")
 API_TOKEN = os.getenv("SHOPIFY_API_TOKEN")
 API_VERSION = "2026-01"
 
 STORE_TZ = ZoneInfo("Europe/Berlin")
+
 BASE_URL = f"https://{STORE_NAME}.myshopify.com/admin/api/{API_VERSION}"
 ORDERS_URL = f"{BASE_URL}/orders.json"
 
@@ -18,13 +22,20 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
+# ================================
+# FETCH ORDERS (WITH TRANSACTIONS)
+# ================================
 def fetch_orders():
     orders = []
     url = ORDERS_URL
     params = {
         "limit": 250,
         "status": "any",
-        "order": "processed_at asc"
+        "order": "processed_at asc",
+        "fields": (
+            "id,processed_at,test,cancelled_at,financial_status,"
+            "total_price,transactions"
+        )
     }
 
     while url:
@@ -44,30 +55,48 @@ def fetch_orders():
 
     return orders
 
+# ================================
+# MAIN
+# ================================
 def main():
     orders = fetch_orders()
-    daily = defaultdict(lambda: {"revenue": 0, "refunds": 0, "orders": 0})
+
+    daily = defaultdict(lambda: {
+        "revenue": 0.0,
+        "refunds": 0.0,
+        "orders": 0
+    })
 
     for o in orders:
-        if o.get("test") or o.get("cancelled_at"):
+        # ---- Shopify Analytics filters ----
+        if o.get("test"):
+            continue
+        if o.get("cancelled_at"):
             continue
         if o.get("financial_status") not in ("paid", "partially_paid"):
             continue
         if not o.get("processed_at"):
             continue
 
-        dt = datetime.fromisoformat(o["processed_at"].replace("Z", "+00:00"))
-        dt = dt.astimezone(STORE_TZ).date()
+        # ---- Date bucket (Berlin time) ----
+        dt = datetime.fromisoformat(
+            o["processed_at"].replace("Z", "+00:00")
+        ).astimezone(STORE_TZ).date()
+
         key = dt.isoformat()
 
+        # ---- Orders & revenue ----
         daily[key]["orders"] += 1
         daily[key]["revenue"] += float(o["total_price"])
 
-        for refund in o.get("refunds", []):
-            for tx in refund.get("transactions", []):
-                if tx.get("kind") == "refund":
-                    daily[key]["refunds"] += float(tx["amount"])
+        # ---- REFUNDS (FIXED) ----
+        for tx in o.get("transactions", []):
+            if tx.get("kind") == "refund":
+                daily[key]["refunds"] += float(tx["amount"])
 
+    # ================================
+    # WRITE CSV
+    # ================================
     with open("daily_summary.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["date", "revenue", "refunds", "net_revenue", "order_count"])
@@ -76,6 +105,8 @@ def main():
             ref = round(daily[d]["refunds"], 2)
             net = round(rev - ref, 2)
             w.writerow([d, rev, ref, net, daily[d]["orders"]])
+
+    print("✅ daily_summary.csv generated with refunds included")
 
 if __name__ == "__main__":
     main()
