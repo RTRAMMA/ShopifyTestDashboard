@@ -1,10 +1,15 @@
 fetch("./daily_summary.csv")
   .then(r => r.text())
-  .then(csv => setupDashboard(parseCSV(csv)));
+  .then(csv => {
+    const data = parseCSV(csv);
+    setupDashboard(data);
+    updateLastUpdatedStatus(data); // ✅ NEW
+  });
 
 function parseCSV(csv) {
   const rows = csv.trim().split("\n");
   rows.shift();
+
   return rows.map(r => {
     const v = r.split(",");
     return {
@@ -19,9 +24,9 @@ function parseCSV(csv) {
 
 function setupDashboard(data) {
   drawCharts(data);
-  updateLastUpdatedStatus(data);
 
   const adInput = document.getElementById("adSpendInput");
+
   function recalc() {
     updateSummary(
       sum(data, "revenue"),
@@ -29,6 +34,7 @@ function setupDashboard(data) {
       parseFloat(adInput.value) || 0
     );
   }
+
   recalc();
   adInput.addEventListener("input", recalc);
 }
@@ -65,24 +71,33 @@ function updateSummary(revenue, refunds, adSpend) {
   }
 }
 
+/* ================================
+   ✅ NEW: LAST UPDATED STATUS ONLY
+   ================================ */
 function updateLastUpdatedStatus(data) {
+  if (!data || data.length === 0) return;
+
   const badge = document.getElementById("updateBadge");
-  const lastDate = new Date(data[data.length - 1].date);
+  const lastDateStr = data[data.length - 1].date;
+
+  const lastDate = new Date(lastDateStr);
   const today = new Date();
 
   lastDate.setHours(0,0,0,0);
   today.setHours(0,0,0,0);
 
-  const diff = Math.round((today - lastDate) / 86400000);
+  const diffDays = Math.round(
+    (today - lastDate) / (1000 * 60 * 60 * 24)
+  );
 
-  if (diff === 0) {
-    badge.textContent = `✅ Up to date (last date: ${data[data.length - 1].date})`;
+  if (diffDays === 0) {
+    badge.textContent = `✅ Data up to date (last date: ${lastDateStr})`;
     badge.className = "badge bg-success";
-  } else if (diff === 1) {
-    badge.textContent = `🟡 Data from yesterday (${data[data.length - 1].date})`;
+  } else if (diffDays === 1) {
+    badge.textContent = `🟡 Data from yesterday (${lastDateStr})`;
     badge.className = "badge bg-warning text-dark";
   } else {
-    badge.textContent = `🔴 Data stale (last date: ${data[data.length - 1].date})`;
+    badge.textContent = `🔴 Data stale (last date: ${lastDateStr})`;
     badge.className = "badge bg-danger";
   }
 }
@@ -103,7 +118,9 @@ function drawCharts(data) {
     type: "bar",
     data: {
       labels: data.map(d => d.date),
-      datasets: [{ label: "Orders", data: data.map(d => d.orders) }]
+      datasets: [
+        { label: "Orders", data: data.map(d => d.orders) }
+      ]
     }
   });
 }
@@ -113,5 +130,8 @@ function sum(data, key) {
 }
 
 function money(v) {
-  return v.toLocaleString("en-US", { style: "currency", currency: "EUR" });
+  return v.toLocaleString("en-US", {
+    style: "currency",
+    currency: "EUR"
+  });
 }
