@@ -5,9 +5,10 @@ from collections import defaultdict
 from zoneinfo import ZoneInfo
 import os
 import sys
+import time
 
 # ================================
-# CONFIGURATION (ENV VARS)
+# CONFIGURATION
 # ================================
 STORE_NAME = os.getenv("SHOPIFY_STORE")
 API_TOKEN = os.getenv("SHOPIFY_API_TOKEN")
@@ -28,14 +29,14 @@ HEADERS = {
 OUTPUT_FILE = "daily_summary.csv"
 
 # ================================
-# TIMEZONE (SHOPIFY REPORTING)
+# TIMEZONE (BERLIN)
 # ================================
 STORE_TZ = ZoneInfo("Europe/Berlin")
 now_berlin = datetime.now(STORE_TZ)
 cutoff_date = now_berlin - timedelta(days=30)
 
 # ================================
-# FETCH ALL ORDERS (PAGINATED)
+# FETCH ALL ORDERS
 # ================================
 def fetch_all_orders():
     orders = []
@@ -46,77 +47,56 @@ def fetch_all_orders():
         "order": "created_at desc"
     }
 
-    page = 1
-    print("=" * 40)
-    print("🛒 Fetching Shopify orders")
-    print("📅 Last 30 days (Berlin time)")
-    print("=" * 40)
-
     while url:
-        response = requests.get(url, headers=HEADERS, params=params, timeout=30)
-        response.raise_for_status()
-
-        data = response.json()
-        batch = data.get("orders", [])
-        orders.extend(batch)
-
-        print(f"✅ Page {page}: fetched {len(batch)} orders (total: {len(orders)})")
-
+        r = requests.get(url, headers=HEADERS, params=params, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        orders.extend(data.get("orders", []))
         params = None
 
-        link_header = response.headers.get("Link")
-        next_url = None
-        if link_header:
-            for link in link_header.split(","):
-                if 'rel="next"' in link:
-                    next_url = link.split(";")[0].strip("<> ")
-
-        url = next_url
-        page += 1
+        link = r.headers.get("Link")
+        url = None
+        if link:
+            for part in link.split(","):
+                if 'rel="next"' in part:
+                    url = part.split(";")[0].strip("<> ")
 
     return orders
 
 # ================================
-# PROCESS ORDERS (SHOPIFY-EXACT)
+# FETCH REFUNDS FOR ONE ORDER
+# ================================
+def fetch_refunds(order_id):
+    url = f"{BASE_URL}/orders/{order_id}/refunds.json"
+    r = requests.get(url, headers=HEADERS, timeout=30)
+    r.raise_for_status()
+    return r.json().get("refunds", [])
+
+# ================================
+# PROCESS DATA
 # ================================
 def process_orders(orders):
-    daily_data = defaultdict(lambda: {
+    daily = defaultdict(lambda: {
         "revenue": 0.0,
         "refunds": 0.0,
         "orders": 0
     })
 
-    # ------------------------------------------------
-    # 1️⃣ PRE-FILL ALL DAYS (INCL. ZERO-ORDER DAYS)
-    # ------------------------------------------------
-    start_date = cutoff_date.date()
-    end_date = now_berlin.date()
+    # Pre-fill all days (0-order days included)
+    d = cutoff_date.date()
+    while d <= now_berlin.date():
+        daily[d.strftime("%Y-%m-%d")]
+        d += timedelta(days=1)
 
-    current_date = start_date
-    while current_date <= end_date:
-        daily_data[current_date.strftime("%Y-%m-%d")]
-        current_date += timedelta(days=1)
+    refunded_orders = 0
 
-    kept = 0
-    excluded = 0
-
-    # ------------------------------------------------
-    # 2️⃣ APPLY SHOPIFY ANALYTICS FILTERS
-    # ------------------------------------------------
     for order in orders:
-        # ❌ Exclude test orders
+        # Shopify Analytics filters
         if order.get("test"):
-            excluded += 1
             continue
-
-        # ❌ Exclude unpaid orders
         if order.get("financial_status") != "paid":
-            excluded += 1
             continue
-
-        # ❌ Exclude cancelled orders
         if order.get("cancelled_at"):
-            excluded += 1
             continue
 
         created_utc = datetime.fromisoformat(
@@ -127,47 +107,54 @@ def process_orders(orders):
         if created_berlin < cutoff_date:
             continue
 
-        date_key = created_berlin.strftime("%Y-%m-%d")
+        order_day = created_berlin.strftime("%Y-%m-%d")
+        daily[order_day]["orders"] += 1
+        daily[order_day]["revenue"] += float(order["total_price"])
 
-        daily_data[date_key]["orders"] += 1
-        daily_data[date_key]["revenue"] += float(order["total_price"])
+        # -----------------------------
+        # REFUNDS (by refund date)
+        # -----------------------------
+        refunds = fetch_refunds(order["id"])
+        if refunds:
+            refunded_orders += 1
 
-        for refund in order.get("refunds", []):
+        for refund in refunds:
             for tx in refund.get("transactions", []):
                 if tx.get("kind") == "refund":
-                    daily_data[date_key]["refunds"] += float(tx["amount"])
+                    refund_utc = datetime.fromisoformat(
+                        tx["created_at"].replace("Z", "+00:00")
+                    )
+                    refund_berlin = refund_utc.astimezone(STORE_TZ)
 
-        kept += 1
+                    if refund_berlin < cutoff_date:
+                        continue
 
-    print(f"📦 Orders kept: {kept}")
-    print(f"🚫 Orders excluded (Shopify rules): {excluded}")
-    print(f"📅 Days generated: {len(daily_data)}")
+                    refund_day = refund_berlin.strftime("%Y-%m-%d")
+                    daily[refund_day]["refunds"] += float(tx["amount"])
 
-    return daily_data
+        # Rate-limit safety (Shopify friendly)
+        time.sleep(0.15)
+
+    print(f"🔁 Orders with refunds fetched: {refunded_orders}")
+    return daily
 
 # ================================
 # WRITE CSV
 # ================================
-def write_csv(daily_data):
-    with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow([
-            "date",
-            "revenue",
-            "refunds",
-            "net_revenue",
-            "order_count"
-        ])
+def write_csv(data):
+    with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["date", "revenue", "refunds", "net_revenue", "order_count"])
 
-        for date in sorted(daily_data.keys()):
-            revenue = daily_data[date]["revenue"]
-            refunds = daily_data[date]["refunds"]
-            writer.writerow([
-                date,
-                round(revenue, 2),
-                round(refunds, 2),
-                round(revenue - refunds, 2),
-                daily_data[date]["orders"]
+        for d in sorted(data.keys()):
+            rev = data[d]["revenue"]
+            ref = data[d]["refunds"]
+            w.writerow([
+                d,
+                round(rev, 2),
+                round(ref, 2),
+                round(rev - ref, 2),
+                data[d]["orders"]
             ])
 
 # ================================
@@ -175,14 +162,12 @@ def write_csv(daily_data):
 # ================================
 def main():
     orders = fetch_all_orders()
-    print(f"📦 Total orders fetched (raw): {len(orders)}")
+    print(f"📦 Orders fetched: {len(orders)}")
 
-    daily_data = process_orders(orders)
-    write_csv(daily_data)
+    data = process_orders(orders)
+    write_csv(data)
 
-    print("=" * 40)
-    print(f"✅ CSV generated: {OUTPUT_FILE}")
-    print("=" * 40)
+    print("✅ CSV generated:", OUTPUT_FILE)
 
 if __name__ == "__main__":
     main()
