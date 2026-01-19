@@ -168,7 +168,7 @@ if (refreshBtn) {
           method: "POST",
           headers: {
             Accept: "application/vnd.github+json",
-            "Authorization": "Bearer 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"
+            "Authorization": "Bearer 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"
           },
           body: JSON.stringify({ ref: "main" })
         }
@@ -194,5 +194,6 @@ function money(v) {
     currency: "EUR"
   });
 }
+
 
 
