@@ -111,7 +111,7 @@ function drawCharts(data) {
 }
 
 // -------------------------------
-// SYNC STATUS (polling)
+// SYNC STATUS (POLLING)
 // -------------------------------
 function updateSyncStatus() {
   fetch("./sync_status.json")
@@ -128,6 +128,13 @@ function updateSyncStatus() {
         badge.innerText = "✅ Data up to date";
         badge.className = "badge bg-success";
         ts.innerText = "Last updated: " + d.last_updated;
+
+        // 🔓 Re-enable button when done
+        if (refreshBtn) {
+          refreshBtn.disabled = false;
+          refreshBtn.innerText = "🔄 Refresh Data";
+          refreshMsg.innerText = "";
+        }
       }
     })
     .catch(() => {});
@@ -137,7 +144,7 @@ updateSyncStatus();
 setInterval(updateSyncStatus, 5000);
 
 // -------------------------------
-// MANUAL REFRESH BUTTON
+// MANUAL REFRESH BUTTON (UPDATED)
 // -------------------------------
 const refreshBtn = document.getElementById("refreshBtn");
 const refreshMsg = document.getElementById("refreshMsg");
@@ -145,25 +152,31 @@ const refreshMsg = document.getElementById("refreshMsg");
 if (refreshBtn) {
   refreshBtn.addEventListener("click", async () => {
     refreshBtn.disabled = true;
-    refreshMsg.innerText = "Triggering refresh…";
+    refreshBtn.innerText = "⏳ Refreshing…";
+    refreshMsg.innerText = "Refresh started ✔";
+
+    // ⭐ IMMEDIATE optimistic UI update
+    document.getElementById("syncBadge").innerText = "🔄 Data syncing…";
+    document.getElementById("syncBadge").className =
+      "badge bg-warning text-dark";
+    document.getElementById("lastUpdated").innerText = "";
 
     try {
       await fetch(
-        "https://api.github.com/repos/RTRAMMA/ShopifyTestDashboard/actions/workflows/daily_update.yaml/dispatches",
+       "https://api.github.com/repos/RTRAMMA/ShopifyTestDashboard/actions/workflows/daily_update.yaml/dispatches",
         {
           method: "POST",
           headers: {
-            "Accept": "application/vnd.github+json",
+            Accept: "application/vnd.github+json",
             "Authorization": "Bearer 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"
           },
           body: JSON.stringify({ ref: "main" })
         }
       );
-
-      refreshMsg.innerText = "Refresh started ✔";
     } catch (e) {
       refreshMsg.innerText = "Failed to trigger refresh ❌";
       refreshBtn.disabled = false;
+      refreshBtn.innerText = "🔄 Refresh Data";
     }
   });
 }
@@ -181,4 +194,3 @@ function money(v) {
     currency: "EUR"
   });
 }
-
