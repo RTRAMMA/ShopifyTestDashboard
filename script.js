@@ -154,7 +154,7 @@ if (refreshBtn) {
           method: "POST",
           headers: {
             "Accept": "application/vnd.github+json",
-            "Authorization": "Bearer YOUR_FINE_GRAINED_PAT"
+            "Authorization": "Bearer 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"
           },
           body: JSON.stringify({ ref: "main" })
         }
