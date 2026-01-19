@@ -129,7 +129,6 @@ function updateSyncStatus() {
         badge.className = "badge bg-success";
         ts.innerText = "Last updated: " + d.last_updated;
 
-        // 🔓 Re-enable button when done
         if (refreshBtn) {
           refreshBtn.disabled = false;
           refreshBtn.innerText = "🔄 Refresh Data";
@@ -144,7 +143,7 @@ updateSyncStatus();
 setInterval(updateSyncStatus, 5000);
 
 // -------------------------------
-// MANUAL REFRESH BUTTON (UPDATED)
+// MANUAL REFRESH BUTTON (CLOUDFLARE)
 // -------------------------------
 const refreshBtn = document.getElementById("refreshBtn");
 const refreshMsg = document.getElementById("refreshMsg");
@@ -155,18 +154,21 @@ if (refreshBtn) {
     refreshBtn.innerText = "⏳ Refreshing…";
     refreshMsg.innerText = "Refresh started ✔";
 
-    // ⭐ IMMEDIATE optimistic UI update
+    // Optimistic UI
     document.getElementById("syncBadge").innerText = "🔄 Data syncing…";
     document.getElementById("syncBadge").className =
       "badge bg-warning text-dark";
     document.getElementById("lastUpdated").innerText = "";
 
     try {
-      await fetch(
-  "https://github-workflow-trigger.raymartkarganilla.workers.dev",
-  { method: "POST" }
-);
+      const res = await fetch(
+        "https://github-workflow-trigger.raymartkarganilla.workers.dev",
+        { method: "POST" }
+      );
 
+      if (!res.ok) {
+        throw new Error("Worker error: " + res.status);
+      }
     } catch (e) {
       refreshMsg.innerText = "Failed to trigger refresh ❌";
       refreshBtn.disabled = false;
@@ -188,7 +190,3 @@ function money(v) {
     currency: "EUR"
   });
 }
-
-
-
-
