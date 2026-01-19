@@ -3,97 +3,55 @@ name: Daily Data Update
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 0 * * *"   # runs daily at 00:00 UTC
-
-permissions:
-  contents: write
+    - cron: "0 3 * * *" # Daily auto-refresh (04:00 Berlin)
 
 jobs:
-  update-data:
+  update:
     runs-on: ubuntu-latest
 
     steps:
-      # -------------------------------
-      # CHECKOUT REPO
-      # -------------------------------
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      # -------------------------------
-      # SET UP PYTHON
-      # -------------------------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # -------------------------------
-      # MARK STATUS AS SYNCING
-      # -------------------------------
-      - name: Write syncing status
-        run: |
-          python << 'EOF'
-          from datetime import datetime, timezone
-          import json
-
-          sync_status = {
-              "status": "syncing",
-              "last_updated": datetime.now(timezone.utc)
-                  .isoformat(timespec="seconds")
-                  .replace("+00:00", "Z")
-          }
-
-          with open("sync_status.json", "w") as f:
-              json.dump(sync_status, f, indent=2)
-          EOF
-
-      # -------------------------------
-      # INSTALL DEPENDENCIES
-      # -------------------------------
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests pandas
+        run: pip install requests
 
-      # -------------------------------
-      # FETCH SHOPIFY DATA (RESTORED ENV VARS)
-      # -------------------------------
+      # -------------------------
+      # Mark sync START
+      # -------------------------
+      - name: Set sync status to syncing
+        run: |
+          echo '{ "status": "syncing" }' > sync_status.json
+
+      # -------------------------
+      # Run Shopify fetch
+      # -------------------------
       - name: Fetch Shopify data
         env:
           SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
           SHOPIFY_API_TOKEN: ${{ secrets.SHOPIFY_API_TOKEN }}
           SHOPIFY_API_VERSION: "2026-01"
+        run: python fetch_shopify_data.py
+
+      # -------------------------
+      # Mark sync DONE
+      # -------------------------
+      - name: Set sync status to done
         run: |
-          python fetch_shopify_data.py
+          echo "{ \"status\": \"done\", \"last_updated\": \"$(date -u '+%Y-%m-%d %H:%M UTC')\" }" > sync_status.json
 
-      # -------------------------------
-      # MARK STATUS AS DONE (FINAL)
-      # -------------------------------
-      - name: Write done status
+      # -------------------------
+      # Commit & push
+      # -------------------------
+      - name: Commit updates
         run: |
-          python << 'EOF'
-          from datetime import datetime, timezone
-          import json
-
-          sync_status = {
-              "status": "done",
-              "last_updated": datetime.now(timezone.utc)
-                  .isoformat(timespec="seconds")
-                  .replace("+00:00", "Z")
-          }
-
-          with open("sync_status.json", "w") as f:
-              json.dump(sync_status, f, indent=2)
-          EOF
-
-      # -------------------------------
-      # COMMIT & PUSH CHANGES
-      # -------------------------------
-      - name: Commit and push updates
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
           git add daily_summary.csv sync_status.json
-          git commit -m "Update daily Shopify data" || echo "No changes to commit"
+          git commit -m "🔄 Data refresh" || echo "No changes"
           git push
