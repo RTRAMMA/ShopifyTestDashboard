@@ -163,16 +163,10 @@ if (refreshBtn) {
 
     try {
       await fetch(
-       "https://api.github.com/repos/RTRAMMA/ShopifyTestDashboard/actions/workflows/daily_update.yml/dispatches",
-        {
-          method: "POST",
-          headers: {
-            Accept: "application/vnd.github+json",
-            "Authorization": "Bearer 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"
-          },
-          body: JSON.stringify({ ref: "main" })
-        }
-      );
+  "https://github-workflow-trigger.raymartkarganilla.workers.dev",
+  { method: "POST" }
+);
+
     } catch (e) {
       refreshMsg.innerText = "Failed to trigger refresh ❌";
       refreshBtn.disabled = false;
@@ -194,6 +188,7 @@ function money(v) {
     currency: "EUR"
   });
 }
+
 
 
 
