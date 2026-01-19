@@ -1,6 +1,6 @@
 import requests
 import csv
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from collections import defaultdict
 from zoneinfo import ZoneInfo
 import os
@@ -28,11 +28,9 @@ HEADERS = {
 OUTPUT_FILE = "daily_summary.csv"
 
 # ================================
-# TIMEZONE (CLIENT: BERLIN)
+# TIMEZONE (SHOPIFY REPORTING)
 # ================================
 STORE_TZ = ZoneInfo("Europe/Berlin")
-
-# Last 30 days cutoff (Berlin time)
 now_berlin = datetime.now(STORE_TZ)
 cutoff_date = now_berlin - timedelta(days=30)
 
@@ -49,20 +47,14 @@ def fetch_all_orders():
     }
 
     page = 1
-
     print("=" * 40)
     print("🛒 Fetching Shopify orders")
-    print("📅 Filtering to last 30 days (Berlin time)")
+    print("📅 Last 30 days (Berlin time)")
     print("=" * 40)
 
     while url:
-        try:
-            response = requests.get(url, headers=HEADERS, params=params, timeout=30)
-            response.raise_for_status()
-        except Exception as e:
-            print(f"❌ API request failed on page {page}")
-            print(e)
-            sys.exit(1)
+        response = requests.get(url, headers=HEADERS, params=params, timeout=30)
+        response.raise_for_status()
 
         data = response.json()
         batch = data.get("orders", [])
@@ -70,11 +62,10 @@ def fetch_all_orders():
 
         print(f"✅ Page {page}: fetched {len(batch)} orders (total: {len(orders)})")
 
-        params = None  # IMPORTANT for pagination
+        params = None
 
         link_header = response.headers.get("Link")
         next_url = None
-
         if link_header:
             for link in link_header.split(","):
                 if 'rel="next"' in link:
@@ -86,7 +77,7 @@ def fetch_all_orders():
     return orders
 
 # ================================
-# PROCESS ORDERS INTO DAILY TOTALS
+# PROCESS ORDERS (SHOPIFY-EXACT)
 # ================================
 def process_orders(orders):
     daily_data = defaultdict(lambda: {
@@ -96,38 +87,50 @@ def process_orders(orders):
     })
 
     # ------------------------------------------------
-    # 1️⃣ PRE-FILL ALL DAYS (INCLUDING 0-ORDER DAYS)
+    # 1️⃣ PRE-FILL ALL DAYS (INCL. ZERO-ORDER DAYS)
     # ------------------------------------------------
     start_date = cutoff_date.date()
     end_date = now_berlin.date()
 
     current_date = start_date
     while current_date <= end_date:
-        date_key = current_date.strftime("%Y-%m-%d")
-        daily_data[date_key]  # initialize zeros
+        daily_data[current_date.strftime("%Y-%m-%d")]
         current_date += timedelta(days=1)
 
-    # ------------------------------------------------
-    # 2️⃣ APPLY ORDERS
-    # ------------------------------------------------
     kept = 0
+    excluded = 0
 
+    # ------------------------------------------------
+    # 2️⃣ APPLY SHOPIFY ANALYTICS FILTERS
+    # ------------------------------------------------
     for order in orders:
+        # ❌ Exclude test orders
+        if order.get("test"):
+            excluded += 1
+            continue
+
+        # ❌ Exclude unpaid orders
+        if order.get("financial_status") != "paid":
+            excluded += 1
+            continue
+
+        # ❌ Exclude cancelled orders
+        if order.get("cancelled_at"):
+            excluded += 1
+            continue
+
         created_utc = datetime.fromisoformat(
             order["created_at"].replace("Z", "+00:00")
         )
-
-        # Convert to Berlin time
         created_berlin = created_utc.astimezone(STORE_TZ)
 
         if created_berlin < cutoff_date:
             continue
 
         date_key = created_berlin.strftime("%Y-%m-%d")
-        revenue = float(order["total_price"])
 
-        daily_data[date_key]["revenue"] += revenue
         daily_data[date_key]["orders"] += 1
+        daily_data[date_key]["revenue"] += float(order["total_price"])
 
         for refund in order.get("refunds", []):
             for tx in refund.get("transactions", []):
@@ -136,8 +139,9 @@ def process_orders(orders):
 
         kept += 1
 
-    print(f"📦 Orders within last 30 days: {kept}")
-    print(f"📅 Days generated (incl. zero-order days): {len(daily_data)}")
+    print(f"📦 Orders kept: {kept}")
+    print(f"🚫 Orders excluded (Shopify rules): {excluded}")
+    print(f"📅 Days generated: {len(daily_data)}")
 
     return daily_data
 
@@ -158,15 +162,12 @@ def write_csv(daily_data):
         for date in sorted(daily_data.keys()):
             revenue = daily_data[date]["revenue"]
             refunds = daily_data[date]["refunds"]
-            net_revenue = revenue - refunds
-            orders = daily_data[date]["orders"]
-
             writer.writerow([
                 date,
                 round(revenue, 2),
                 round(refunds, 2),
-                round(net_revenue, 2),
-                orders
+                round(revenue - refunds, 2),
+                daily_data[date]["orders"]
             ])
 
 # ================================
@@ -174,7 +175,7 @@ def write_csv(daily_data):
 # ================================
 def main():
     orders = fetch_all_orders()
-    print(f"📦 Total orders fetched (all time): {len(orders)}")
+    print(f"📦 Total orders fetched (raw): {len(orders)}")
 
     daily_data = process_orders(orders)
     write_csv(daily_data)
