@@ -56,12 +56,13 @@ jobs:
           pip install requests pandas
 
       # -------------------------------
-      # FETCH SHOPIFY DATA
+      # FETCH SHOPIFY DATA (RESTORED ENV VARS)
       # -------------------------------
       - name: Fetch Shopify data
         env:
           SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
-          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
+          SHOPIFY_API_TOKEN: ${{ secrets.SHOPIFY_API_TOKEN }}
+          SHOPIFY_API_VERSION: "2026-01"
         run: |
           python fetch_shopify_data.py
 
