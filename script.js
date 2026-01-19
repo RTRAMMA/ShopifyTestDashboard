@@ -149,7 +149,7 @@ if (refreshBtn) {
 
     try {
       await fetch(
-        "https://api.github.com/repos/YOUR_GITHUB_USER/YOUR_REPO/actions/workflows/daily_update.yaml/dispatches",
+        "https://api.github.com/repos/RTRAMMA/ShopifyTestDashboard/actions/workflows/daily_update.yaml/dispatches",
         {
           method: "POST",
           headers: {
@@ -181,3 +181,4 @@ function money(v) {
     currency: "EUR"
   });
 }
+
