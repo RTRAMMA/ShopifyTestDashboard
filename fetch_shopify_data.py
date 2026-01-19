@@ -2,6 +2,7 @@ import requests
 import csv
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
+from zoneinfo import ZoneInfo
 import os
 import sys
 
@@ -26,8 +27,14 @@ HEADERS = {
 
 OUTPUT_FILE = "daily_summary.csv"
 
-# Last 30 days cutoff (UTC)
-cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
+# ================================
+# TIMEZONE (CLIENT: BERLIN)
+# ================================
+STORE_TZ = ZoneInfo("Europe/Berlin")
+
+# Last 30 days cutoff (Berlin time)
+now_berlin = datetime.now(STORE_TZ)
+cutoff_date = now_berlin - timedelta(days=30)
 
 # ================================
 # FETCH ALL ORDERS (PAGINATED)
@@ -45,7 +52,7 @@ def fetch_all_orders():
 
     print("=" * 40)
     print("🛒 Fetching Shopify orders")
-    print("📅 Filtering to last 30 days (post-fetch)")
+    print("📅 Filtering to last 30 days (Berlin time)")
     print("=" * 40)
 
     while url:
@@ -63,10 +70,8 @@ def fetch_all_orders():
 
         print(f"✅ Page {page}: fetched {len(batch)} orders (total: {len(orders)})")
 
-        # After first request, params MUST be None
-        params = None
+        params = None  # IMPORTANT for pagination
 
-        # Parse pagination
         link_header = response.headers.get("Link")
         next_url = None
 
@@ -90,14 +95,35 @@ def process_orders(orders):
         "orders": 0
     })
 
+    # ------------------------------------------------
+    # 1️⃣ PRE-FILL ALL DAYS (INCLUDING 0-ORDER DAYS)
+    # ------------------------------------------------
+    start_date = cutoff_date.date()
+    end_date = now_berlin.date()
+
+    current_date = start_date
+    while current_date <= end_date:
+        date_key = current_date.strftime("%Y-%m-%d")
+        daily_data[date_key]  # initialize zeros
+        current_date += timedelta(days=1)
+
+    # ------------------------------------------------
+    # 2️⃣ APPLY ORDERS
+    # ------------------------------------------------
     kept = 0
 
     for order in orders:
-        created = datetime.fromisoformat(order["created_at"].replace("Z", "+00:00"))
-        if created < cutoff_date:
+        created_utc = datetime.fromisoformat(
+            order["created_at"].replace("Z", "+00:00")
+        )
+
+        # Convert to Berlin time
+        created_berlin = created_utc.astimezone(STORE_TZ)
+
+        if created_berlin < cutoff_date:
             continue
 
-        date_key = created.strftime("%Y-%m-%d")
+        date_key = created_berlin.strftime("%Y-%m-%d")
         revenue = float(order["total_price"])
 
         daily_data[date_key]["revenue"] += revenue
@@ -111,6 +137,8 @@ def process_orders(orders):
         kept += 1
 
     print(f"📦 Orders within last 30 days: {kept}")
+    print(f"📅 Days generated (incl. zero-order days): {len(daily_data)}")
+
     return daily_data
 
 # ================================
