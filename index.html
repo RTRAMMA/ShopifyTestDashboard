@@ -2,72 +2,128 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Shopify Dashboard</title>
+  <title>Shopify Performance Dashboard</title>
 
+  <!-- Bootstrap -->
   <link
     href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
     rel="stylesheet"
   />
+
+  <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <style>
-    .status-green { color: #198754; font-weight: bold; }
-    .status-yellow { color: #ffc107; font-weight: bold; }
-    .status-red { color: #dc3545; font-weight: bold; }
+    body {
+      background-color: #f5f6f8;
+    }
+    .card {
+      border-radius: 12px;
+    }
+    .status-green {
+      color: #198754;
+      font-weight: bold;
+    }
+    .status-yellow {
+      color: #ffc107;
+      font-weight: bold;
+    }
+    .status-red {
+      color: #dc3545;
+      font-weight: bold;
+    }
+    .status-na {
+      color: #6c757d;
+      font-weight: bold;
+    }
   </style>
 </head>
 
-<body class="container py-4">
+<body class="p-4">
 
-  <h2>Shopify Performance Dashboard</h2>
+  <!-- HEADER -->
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h2>📊 Damastshop Test Dashboard</h2>
 
-  <!-- ✅ NEW: LAST UPDATED STATUS -->
-  <div class="mb-3">
-    <span id="updateBadge" class="badge bg-secondary">
-      Checking data freshness…
-    </span>
+    <div>
+      <button id="refreshBtn" class="btn btn-primary">
+        🔄 Refresh Data
+      </button>
+      <span id="refreshMsg" class="ms-2 text-muted"></span>
+    </div>
   </div>
 
+  <!-- SYNC STATUS -->
+  <div class="mb-4">
+    <span id="syncBadge" class="badge bg-secondary">Checking sync status…</span>
+    <small id="lastUpdated" class="ms-2 text-muted"></small>
+  </div>
+
+  <!-- SUMMARY CARDS -->
   <div class="row g-3 mb-4">
-    <div class="col">
+    <div class="col-md-2">
       <div class="card p-3">
-        <small>Total Revenue</small>
+        <small>Revenue</small>
         <h5 id="totalRevenue">—</h5>
       </div>
     </div>
 
-    <div class="col">
+    <div class="col-md-2">
       <div class="card p-3">
-        <small>Total Refunds</small>
+        <small>Refunds</small>
         <h5 id="totalRefunds">—</h5>
       </div>
     </div>
 
-    <div class="col">
+    <div class="col-md-2">
       <div class="card p-3">
-        <small>Ad Spend (€)</small>
-        <input id="adSpendInput" type="number" class="form-control" value="0" />
+        <small>Ad Spend</small>
+        <h5 id="adSpend">—</h5>
       </div>
     </div>
 
-    <div class="col">
+    <div class="col-md-2">
       <div class="card p-3">
         <small>Net Profit</small>
         <h5 id="netProfit">—</h5>
       </div>
     </div>
 
-    <div class="col">
+    <div class="col-md-2">
       <div class="card p-3">
         <small>ROAS</small>
         <h5 id="roas">—</h5>
-        <small id="status"></small>
+      </div>
+    </div>
+
+    <div class="col-md-2">
+      <div class="card p-3">
+        <small>Status</small>
+        <h5 id="status">—</h5>
       </div>
     </div>
   </div>
 
-  <canvas id="revenueChart" height="100"></canvas>
-  <canvas id="ordersChart" height="100" class="mt-4"></canvas>
+  <!-- INPUT -->
+  <div class="card p-3 mb-4">
+    <label class="form-label">Manual Ad Spend (€)</label>
+    <input
+      type="number"
+      class="form-control"
+      id="adSpendInput"
+      value="0"
+      step="0.01"
+    />
+  </div>
+
+  <!-- CHARTS -->
+  <div class="card p-4 mb-4">
+    <canvas id="revenueChart"></canvas>
+  </div>
+
+  <div class="card p-4">
+    <canvas id="ordersChart"></canvas>
+  </div>
 
   <script src="script.js"></script>
 </body>
