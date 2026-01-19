@@ -121,8 +121,14 @@ function updateSyncStatus() {
       const badge = document.getElementById("syncBadge");
       const ts = document.getElementById("lastUpdated");
 
+      // ⭐ IMPORTANT UX RULE:
+      // While a refresh is in progress, do NOT override badge
+      if (refreshCooldown) {
+        return;
+      }
+
       if (d.status === "syncing") {
-        badge.innerText = "🔄 Data syncing…";
+        badge.innerText = "⏳ Refresh in progress…";
         badge.className = "badge bg-warning text-dark";
         ts.innerText = "";
       } else {
@@ -154,11 +160,12 @@ if (refreshBtn) {
     refreshBtn.innerText = `⏳ Refreshing… (${remaining}s)`;
     refreshMsg.innerText = "Refresh started ✔";
 
-    // Optimistic UI
-    document.getElementById("syncBadge").innerText = "🔄 Data syncing…";
-    document.getElementById("syncBadge").className =
-      "badge bg-warning text-dark";
-    document.getElementById("lastUpdated").innerText = "";
+    // ⭐ Lock badge immediately
+    const badge = document.getElementById("syncBadge");
+    const ts = document.getElementById("lastUpdated");
+    badge.innerText = "⏳ Refresh in progress…";
+    badge.className = "badge bg-warning text-dark";
+    ts.innerText = "";
 
     // Countdown timer
     const countdown = setInterval(() => {
@@ -171,6 +178,9 @@ if (refreshBtn) {
         refreshBtn.disabled = false;
         refreshBtn.innerText = "🔄 Refresh Data";
         refreshMsg.innerText = "";
+
+        // Allow polling to update badge naturally
+        updateSyncStatus();
       }
     }, 1000);
 
