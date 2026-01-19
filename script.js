@@ -1,5 +1,6 @@
 let revenueChart;
 let ordersChart;
+let refreshCooldown = false;
 
 // -------------------------------
 // LOAD CSV
@@ -128,12 +129,6 @@ function updateSyncStatus() {
         badge.innerText = "✅ Data up to date";
         badge.className = "badge bg-success";
         ts.innerText = "Last updated: " + d.last_updated;
-
-        if (refreshBtn) {
-          refreshBtn.disabled = false;
-          refreshBtn.innerText = "🔄 Refresh Data";
-          refreshMsg.innerText = "";
-        }
       }
     })
     .catch(() => {});
@@ -143,15 +138,20 @@ updateSyncStatus();
 setInterval(updateSyncStatus, 5000);
 
 // -------------------------------
-// MANUAL REFRESH BUTTON (CLOUDFLARE)
+// MANUAL REFRESH BUTTON (WITH COOLDOWN)
 // -------------------------------
 const refreshBtn = document.getElementById("refreshBtn");
 const refreshMsg = document.getElementById("refreshMsg");
 
 if (refreshBtn) {
   refreshBtn.addEventListener("click", async () => {
+    if (refreshCooldown) return;
+
+    refreshCooldown = true;
     refreshBtn.disabled = true;
-    refreshBtn.innerText = "⏳ Refreshing…";
+
+    let remaining = 60;
+    refreshBtn.innerText = `⏳ Refreshing… (${remaining}s)`;
     refreshMsg.innerText = "Refresh started ✔";
 
     // Optimistic UI
@@ -159,6 +159,20 @@ if (refreshBtn) {
     document.getElementById("syncBadge").className =
       "badge bg-warning text-dark";
     document.getElementById("lastUpdated").innerText = "";
+
+    // Countdown timer
+    const countdown = setInterval(() => {
+      remaining--;
+      refreshBtn.innerText = `⏳ Refreshing… (${remaining}s)`;
+
+      if (remaining <= 0) {
+        clearInterval(countdown);
+        refreshCooldown = false;
+        refreshBtn.disabled = false;
+        refreshBtn.innerText = "🔄 Refresh Data";
+        refreshMsg.innerText = "";
+      }
+    }, 1000);
 
     try {
       const res = await fetch(
@@ -173,6 +187,7 @@ if (refreshBtn) {
       refreshMsg.innerText = "Failed to trigger refresh ❌";
       refreshBtn.disabled = false;
       refreshBtn.innerText = "🔄 Refresh Data";
+      refreshCooldown = false;
     }
   });
 }
