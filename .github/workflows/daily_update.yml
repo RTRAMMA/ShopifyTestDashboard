@@ -1,12 +1,12 @@
-name: Daily Shopify Dashboard Update
+name: Daily Data Update
 
 on:
-  schedule:
-    - cron: "0 2 * * *"   # Daily at 02:00 UTC
   workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *" # Daily auto-refresh (04:00 Berlin)
 
 jobs:
-  update-dashboard:
+  update:
     runs-on: ubuntu-latest
 
     steps:
@@ -16,24 +16,42 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install requests
 
-      - name: Run data update
+      # -------------------------
+      # Mark sync START
+      # -------------------------
+      - name: Set sync status to syncing
+        run: |
+          echo '{ "status": "syncing" }' > sync_status.json
+
+      # -------------------------
+      # Run Shopify fetch
+      # -------------------------
+      - name: Fetch Shopify data
         env:
           SHOPIFY_STORE: ${{ secrets.SHOPIFY_STORE }}
           SHOPIFY_API_TOKEN: ${{ secrets.SHOPIFY_API_TOKEN }}
-          SHOPIFY_API_VERSION: ${{ secrets.SHOPIFY_API_VERSION }}
-        run: |
-          python fetch_shopify_data.py
+          SHOPIFY_API_VERSION: "2026-01"
+        run: python fetch_shopify_data.py
 
-      - name: Commit and push updated CSV
+      # -------------------------
+      # Mark sync DONE
+      # -------------------------
+      - name: Set sync status to done
+        run: |
+          echo "{ \"status\": \"done\", \"last_updated\": \"$(date -u '+%Y-%m-%d %H:%M UTC')\" }" > sync_status.json
+
+      # -------------------------
+      # Commit & push
+      # -------------------------
+      - name: Commit updates
         run: |
           git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add daily_summary.csv
-          git commit -m "Daily dashboard update" || echo "No changes"
+          git config user.email "actions@github.com"
+          git add daily_summary.csv sync_status.json
+          git commit -m "🔄 Data refresh" || echo "No changes"
           git push
