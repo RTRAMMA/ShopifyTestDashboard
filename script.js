@@ -3,17 +3,14 @@ let ordersChart;
 let refreshCooldown = false;
 
 // -------------------------------
-// LOAD CSV (CACHE-BUSTED)
+// LOAD CSV
 // -------------------------------
-function loadCSV() {
-  return fetch(`./daily_summary.csv?t=${Date.now()}`)
-    .then(r => r.text())
-    .then(csv => parseCSV(csv));
-}
-
-loadCSV().then(data => {
-  setupDashboard(data);
-});
+fetch("./daily_summary.csv")
+  .then(r => r.text())
+  .then(csv => {
+    const data = parseCSV(csv);
+    setupDashboard(data);
+  });
 
 // -------------------------------
 // CSV PARSER
@@ -115,16 +112,20 @@ function drawCharts(data) {
 }
 
 // -------------------------------
-// SYNC STATUS (CACHE-BUSTED POLLING)
+// SYNC STATUS (POLLING)
 // -------------------------------
 function updateSyncStatus() {
-  fetch(`./sync_status.json?t=${Date.now()}`)
+  fetch("./sync_status.json")
     .then(r => r.json())
     .then(d => {
       const badge = document.getElementById("syncBadge");
       const ts = document.getElementById("lastUpdated");
 
-      if (refreshCooldown) return;
+      // ⭐ IMPORTANT UX RULE:
+      // While a refresh is in progress, do NOT override badge
+      if (refreshCooldown) {
+        return;
+      }
 
       if (d.status === "syncing") {
         badge.innerText = "⏳ Refresh in progress…";
@@ -143,7 +144,7 @@ updateSyncStatus();
 setInterval(updateSyncStatus, 5000);
 
 // -------------------------------
-// MANUAL REFRESH BUTTON
+// MANUAL REFRESH BUTTON (WITH COOLDOWN)
 // -------------------------------
 const refreshBtn = document.getElementById("refreshBtn");
 const refreshMsg = document.getElementById("refreshMsg");
@@ -159,12 +160,14 @@ if (refreshBtn) {
     refreshBtn.innerText = `⏳ Refreshing… (${remaining}s)`;
     refreshMsg.innerText = "Refresh started ✔";
 
+    // ⭐ Lock badge immediately
     const badge = document.getElementById("syncBadge");
     const ts = document.getElementById("lastUpdated");
     badge.innerText = "⏳ Refresh in progress…";
     badge.className = "badge bg-warning text-dark";
     ts.innerText = "";
 
+    // Countdown timer
     const countdown = setInterval(() => {
       remaining--;
       refreshBtn.innerText = `⏳ Refreshing… (${remaining}s)`;
@@ -176,13 +179,7 @@ if (refreshBtn) {
         refreshBtn.innerText = "🔄 Refresh Data";
         refreshMsg.innerText = "";
 
-        // 🔁 Reload fresh CSV automatically
-        loadCSV().then(data => {
-          revenueChart.destroy();
-          ordersChart.destroy();
-          setupDashboard(data);
-        });
-
+        // Allow polling to update badge naturally
         updateSyncStatus();
       }
     }, 1000);
@@ -193,7 +190,9 @@ if (refreshBtn) {
         { method: "POST" }
       );
 
-      if (!res.ok) throw new Error("Worker error");
+      if (!res.ok) {
+        throw new Error("Worker error: " + res.status);
+      }
     } catch (e) {
       refreshMsg.innerText = "Failed to trigger refresh ❌";
       refreshBtn.disabled = false;
