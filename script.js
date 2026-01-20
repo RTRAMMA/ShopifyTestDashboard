@@ -1,10 +1,9 @@
 let revenueChart;
 let ordersChart;
 let refreshCooldown = false;
-let syncWatcher = null;
 
 // -------------------------------
-// LOAD CSV (ON PAGE LOAD)
+// LOAD CSV
 // -------------------------------
 fetch("./daily_summary.csv")
   .then(r => r.text())
@@ -113,14 +112,20 @@ function drawCharts(data) {
 }
 
 // -------------------------------
-// SYNC STATUS POLLING
+// SYNC STATUS (POLLING)
 // -------------------------------
 function updateSyncStatus() {
-  fetch("./sync_status.json?t=" + Date.now())
+  fetch("./sync_status.json")
     .then(r => r.json())
     .then(d => {
       const badge = document.getElementById("syncBadge");
       const ts = document.getElementById("lastUpdated");
+
+      // ⭐ IMPORTANT UX RULE:
+      // While a refresh is in progress, do NOT override badge
+      if (refreshCooldown) {
+        return;
+      }
 
       if (d.status === "syncing") {
         badge.innerText = "⏳ Refresh in progress…";
@@ -139,27 +144,7 @@ updateSyncStatus();
 setInterval(updateSyncStatus, 5000);
 
 // -------------------------------
-// AUTO-DETECT SYNC COMPLETION
-// -------------------------------
-function watchForSyncCompletion() {
-  syncWatcher = setInterval(() => {
-    fetch("./sync_status.json?t=" + Date.now())
-      .then(r => r.json())
-      .then(d => {
-        if (d.status === "done") {
-          clearInterval(syncWatcher);
-          syncWatcher = null;
-
-          // ✅ Reload immediately when backend finishes
-          window.location.reload();
-        }
-      })
-      .catch(() => {});
-  }, 3000);
-}
-
-// -------------------------------
-// MANUAL REFRESH BUTTON (SMART)
+// MANUAL REFRESH BUTTON (WITH COOLDOWN)
 // -------------------------------
 const refreshBtn = document.getElementById("refreshBtn");
 const refreshMsg = document.getElementById("refreshMsg");
@@ -170,17 +155,34 @@ if (refreshBtn) {
 
     refreshCooldown = true;
     refreshBtn.disabled = true;
-    refreshBtn.innerText = "⏳ Refreshing…";
-    refreshMsg.innerText = "Waiting for backend sync…";
 
+    let remaining = 60;
+    refreshBtn.innerText = `⏳ Refreshing… (${remaining}s)`;
+    refreshMsg.innerText = "Refresh started ✔";
+
+    // ⭐ Lock badge immediately
     const badge = document.getElementById("syncBadge");
     const ts = document.getElementById("lastUpdated");
     badge.innerText = "⏳ Refresh in progress…";
     badge.className = "badge bg-warning text-dark";
     ts.innerText = "";
 
-    // 🔍 Start watching for completion
-    watchForSyncCompletion();
+    // Countdown timer
+    const countdown = setInterval(() => {
+      remaining--;
+      refreshBtn.innerText = `⏳ Refreshing… (${remaining}s)`;
+
+      if (remaining <= 0) {
+        clearInterval(countdown);
+        refreshCooldown = false;
+        refreshBtn.disabled = false;
+        refreshBtn.innerText = "🔄 Refresh Data";
+        refreshMsg.innerText = "";
+
+        // Allow polling to update badge naturally
+        updateSyncStatus();
+      }
+    }, 1000);
 
     try {
       const res = await fetch(
@@ -188,13 +190,14 @@ if (refreshBtn) {
         { method: "POST" }
       );
 
-      if (!res.ok) throw new Error("Worker error");
+      if (!res.ok) {
+        throw new Error("Worker error: " + res.status);
+      }
     } catch (e) {
       refreshMsg.innerText = "Failed to trigger refresh ❌";
       refreshBtn.disabled = false;
       refreshBtn.innerText = "🔄 Refresh Data";
       refreshCooldown = false;
-      if (syncWatcher) clearInterval(syncWatcher);
     }
   });
 }
